@@ -1,0 +1,30 @@
+{
+    "name": "io/auth",
+    "description": "Sign-in for Io sites: users with Argon2id passwords, database sessions, TOTP with recovery codes, one-time tokens, a login throttle, and roles built from the permissions the app declares.",
+    "type": "library",
+    "license": ["MIT", "Apache-2.0"],
+    "require": {
+        "php": ">=8.5",
+        "io/framework": "^0.1.13",
+        "chillerlan/php-qrcode": "^6.0"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^13.3",
+        "phpstan/phpstan": "^2.2",
+        "tenma/stubs": "^0.2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Io\\Auth\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Io\\Auth\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit --testdox",
+        "stan": "phpstan analyse"
+    }
+}

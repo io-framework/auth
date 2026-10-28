@@ -1,0 +1,8 @@
+includes:
+    - vendor/tenma/stubs/extension.neon
+    - vendor/io/framework/extension.neon
+
+parameters:
+    level: 10
+    paths:
+        - src

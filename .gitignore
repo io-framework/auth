@@ -1,0 +1,14 @@
+# dependencies
+vendor/
+composer.lock
+
+# tooling
+.phpunit.cache/
+.phpunit.result.cache
+coverage/
+phpstan-baseline.neon.tmp
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
