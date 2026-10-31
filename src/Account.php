@@ -8,10 +8,14 @@ use Io\Support\Row;
 /** A user as a list of users shows them. */
 final readonly class Account
 {
-    /** @param list<int> $roles the ids of their roles */
+    /**
+     * @param string $name the display name, or the handle when the site has none
+     * @param list<int> $roles the ids of their roles
+     */
     public function __construct(
         public int $id,
         public string $email,
+        public string $handle,
         public string $name,
         public array $roles,
         public bool $admin,
@@ -31,6 +35,7 @@ final readonly class Account
         return new self(
             $r->int('id'),
             $r->string('email'),
+            $r->string('handle'),
             $r->string('name'),
             $r->list('roles', 'int'),
             $r->bool('admin'),

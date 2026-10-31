@@ -22,6 +22,7 @@ $app->configure(function (AuthOptions $auth) {
     $auth->idle = 12 * 3600;           // seconds after the last request
     $auth->lifetime = 30 * 86400;      // seconds at most
     $auth->remember = false;           // true: the cookie outlives the browser
+    $auth->displayName = true;         // false: users have only a handle
 });
 $app->getContainer()->set(Data\Postgres::connect($url));
 $app->use($app->get(SessionMiddleware::class));
@@ -39,6 +40,21 @@ new Data\Migrations($db)->apply([...Schema::steps(), '001_posts' => 'CREATE TABL
 
 An app may add columns of its own to `auth_users` in its migrations.
 
+## Handles and names
+
+Every user has a handle for addresses like `/u/kakashi`: 3 to 32 of `a-z`, `0-9`, `_` and `-`, kept in lower case.
+Next to it a display name, unless `AuthOptions::$displayName` is off: then the app's forms ask for none and the
+handle stands in for it. Both are unique; two display names that differ only in case count as the same, and a name
+that hides a look-alike letter from another script ("Kakashi" with a Cyrillic а) is refused.
+
+```php
+$id = $users->create('kakashi@example.test', 'kakashi', 'Kakashi Hatake', $password);
+$users->update($id, $email, $handle, $name);   // AccountRefused: HandleTaken, NameTaken, InvalidHandle, InvalidName
+$users->byHandle('kakashi');
+$users->handleTaken($handle, except: $id);    // for a form's message before it submits
+Users::handle($input);                         // the handle as kept, null when invalid; Users::name() likewise
+```
+
 ## Signing in
 
 ```php
@@ -51,7 +67,7 @@ $users->verifySecondFactor($id, $code);              // a TOTP code (each step o
 $sessions->start($id, $req, $res);                   // only once the login is complete
 ```
 
-`SessionMiddleware` signs every request in. `Viewer::current()` returns the `Principal` (id, name, email, roles,
+`SessionMiddleware` signs every request in. `Viewer::current()` returns the `Principal` (id, handle, name, email, roles,
 admin, permissions, `can()`), and `$req->principal` holds its claims. `#[Authenticated]`, `#[Role('Editors')]` and
 `#[Permissions('pages.edit')]` check it; `AuthPlugin` binds the `PermissionProvider` that asks the roles.
 

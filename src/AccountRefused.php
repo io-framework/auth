@@ -11,6 +11,10 @@ final class AccountRefused extends RuntimeException
     {
         parent::__construct(match ($reason) {
             Refusal::EmailTaken => 'This email address has an account already',
+            Refusal::HandleTaken => 'Another account has this handle',
+            Refusal::NameTaken => 'Another account has this name',
+            Refusal::InvalidHandle => 'A handle is 3 to 32 of a-z, 0-9, _ and -',
+            Refusal::InvalidName => 'A name has at most 60 characters, none of them invisible, and no look-alike letters',
             Refusal::RoleTaken => 'A role with this name exists already',
             Refusal::InvalidRoleName => 'A role needs a name of at most 60 characters',
             Refusal::UnknownRole => 'This role does not exist',

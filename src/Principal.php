@@ -8,12 +8,14 @@ use BackedEnum;
 final readonly class Principal
 {
     /**
+     * @param string $name the display name, or the handle when the site has none
      * @param list<string> $roles the roles' names
      * @param list<string> $permissions every permission one of the roles allows
      */
     public function __construct(
         public int $id,
         public int $session,
+        public string $handle,
         public string $name,
         public string $email,
         public array $roles,
@@ -33,13 +35,14 @@ final readonly class Principal
     /**
      * What Io keeps as $req->principal: #[Authenticated], #[Role] (one of 'roles') and #[Permissions] read it.
      *
-     * @return array{sub: int, session: int, name: string, email: string, roles: list<string>, admin: bool, permissions: list<string>}
+     * @return array{sub: int, session: int, handle: string, name: string, email: string, roles: list<string>, admin: bool, permissions: list<string>}
      */
     public function claims(): array
     {
         return [
             'sub' => $this->id,
             'session' => $this->session,
+            'handle' => $this->handle,
             'name' => $this->name,
             'email' => $this->email,
             'roles' => $this->roles,

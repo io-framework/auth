@@ -49,7 +49,8 @@ final class Sessions
             return null;
         }
         $row = $this->db->first(
-            "SELECT s.id, s.user_id, s.last_seen_at < now() - interval '5 minutes' AS stale, u.name, u.email,
+            "SELECT s.id, s.user_id, s.last_seen_at < now() - interval '5 minutes' AS stale, u.handle,
+                    coalesce(u.name, u.handle) AS name, u.email,
                     coalesce(bool_or(r.builtin), false) AS admin,
                     coalesce(array_agg(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles,
                     coalesce(array_agg(DISTINCT rp.permission) FILTER (WHERE rp.permission IS NOT NULL), '{}') AS permissions
@@ -79,6 +80,7 @@ final class Sessions
         return new Principal(
             $row->int('user_id'),
             $row->int('id'),
+            $row->string('handle'),
             $row->string('name'),
             $row->string('email'),
             $row->list('roles', 'string'),

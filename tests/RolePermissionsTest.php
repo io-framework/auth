@@ -10,8 +10,8 @@ final class RolePermissionsTest extends TestCase
     public function testWhatTheSessionsRolesAllow(): void
     {
         $permissions = new RolePermissions();
-        $editor = new Principal(2, 1, 'Ed', 'ed@example.test', ['Editors'], false, ['pages.edit'])->claims();
-        $admin = new Principal(3, 1, 'Ada', 'ada@example.test', ['Admin'], true, [])->claims();
+        $editor = new Principal(2, 1, 'edgar', 'Ed', 'ed@example.test', ['Editors'], false, ['pages.edit'])->claims();
+        $admin = new Principal(3, 1, 'ada', 'Ada', 'ada@example.test', ['Admin'], true, [])->claims();
 
         $this->assertTrue($permissions->hasPermission($editor, 'pages.edit'));
         $this->assertFalse($permissions->hasPermission($editor, 'users.manage'));

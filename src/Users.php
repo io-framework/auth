@@ -5,15 +5,27 @@ namespace Io\Auth;
 use Data\Postgres;
 use Io\Attributes\Inject;
 use Io\Support\Row;
+use Normalizer;
+use Spoofchecker;
 
-/** The users: their passwords, second factor and roles, and the rules for changing someone else's account. */
+/**
+ * The users: their passwords, second factor and roles, and the rules for changing someone else's account. Each has a
+ * handle for addresses like /u/kakashi and, unless AuthOptions::$displayName is off, a display name; both are unique.
+ */
 final class Users
 {
     /** Argon2id: no 72-byte limit like bcrypt, and costly to guess on graphics cards */
     private const string ALGORITHM = PASSWORD_ARGON2ID;
 
-    /** An account with its roles, as Account::from() reads it */
-    private const string ACCOUNT = "SELECT u.id, u.email, u.name, u.disabled_at IS NOT NULL AS disabled,
+    /** Lower-case ASCII letters, digits, _ and -: the same in every address bar and font */
+    private const string HANDLE = '/^[a-z0-9_-]{3,32}$/';
+
+    /** Characters at most in a display name */
+    private const int NAME_LENGTH = 60;
+
+    /** An account with its roles, as Account::from() reads it; without a display name, the handle stands in */
+    private const string ACCOUNT = "SELECT u.id, u.email, u.handle, coalesce(u.name, u.handle) AS name,
+            u.disabled_at IS NOT NULL AS disabled,
             u.totp_enabled_at IS NOT NULL AS two_factor, u.password_hash IS NOT NULL AS has_password, u.last_login_at,
             coalesce(array_agg(ur.role_id ORDER BY ur.role_id) FILTER (WHERE ur.role_id IS NOT NULL), '{}') AS roles,
             coalesce(bool_or(r.builtin), false) AS admin
@@ -21,6 +33,9 @@ final class Users
 
     #[Inject]
     private Postgres $db;
+
+    #[Inject]
+    private AuthOptions $options;
 
     /** Verified when the email is unknown, so the answer takes as long as for a wrong password */
     private static ?string $dummyHash = null;
@@ -43,7 +58,12 @@ final class Users
     /** @return list<Account> the active ones first, by name */
     public function all(): array
     {
-        return $this->db->query(self::ACCOUNT . ' GROUP BY u.id ORDER BY u.disabled_at IS NOT NULL, lower(u.name)', as: Account::from(...));
+        return $this->db->query(self::ACCOUNT . ' GROUP BY u.id ORDER BY u.disabled_at IS NOT NULL, lower(coalesce(u.name, u.handle))', as: Account::from(...));
+    }
+
+    public function byHandle(string $handle): ?Account
+    {
+        return $this->db->first(self::ACCOUNT . ' WHERE u.handle = lower($1) GROUP BY u.id', [trim($handle)], as: Account::from(...));
     }
 
     public function emailTaken(string $email, ?int $except = null): bool
@@ -51,23 +71,43 @@ final class Users
         return $this->db->first('SELECT 1 FROM auth_users WHERE lower(email) = lower($1) AND id IS DISTINCT FROM $2', [trim($email), $except]) !== null;
     }
 
+    public function handleTaken(string $handle, ?int $except = null): bool
+    {
+        return $this->db->first('SELECT 1 FROM auth_users WHERE handle = lower($1) AND id IS DISTINCT FROM $2', [trim($handle), $except]) !== null;
+    }
+
+    /** Whether another user has a display name that reads the same: "Kakashi", "kakashi" and "KAKASHI" do */
+    public function nameTaken(string $name, ?int $except = null): bool
+    {
+        $name = self::name($name);
+        if ($name === null) {
+            return false;
+        }
+
+        return $this->db->first('SELECT 1 FROM auth_users WHERE name_key = $1 AND id IS DISTINCT FROM $2', [self::nameKey($name), $except]) !== null;
+    }
+
     /**
      * A new user; without a password they set one through a link first. With $by, the roles are checked against what
-     * $by may hand out; without, the app vouches for them.
+     * $by may hand out; without, the app vouches for them. $name is left out when AuthOptions::$displayName is off.
      *
      * @param list<int> $roles
      */
-    public function create(string $email, string $name, ?string $password = null, array $roles = [], ?Principal $by = null): int
-    {
-        return $this->db->transaction(function (Postgres $tx) use ($email, $name, $password, $roles, $by): int {
+    public function create(
+        string $email,
+        string $handle,
+        ?string $name = null,
+        ?string $password = null,
+        array $roles = [],
+        ?Principal $by = null,
+    ): int {
+        [$handle, $name] = $this->identity($handle, $name);
+
+        return $this->db->transaction(function (Postgres $tx) use ($email, $handle, $name, $password, $roles, $by): int {
             if ($by !== null) {
                 $this->assignable($tx, $by, $roles);
             }
-            $id = $tx->first(
-                'INSERT INTO auth_users (email, name, password_hash) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING RETURNING id',
-                [trim($email), trim($name), $password === null ? null : self::hash($password)],
-                as: fn (array $row): int => Row::of($row)->int('id'),
-            ) ?? throw new AccountRefused(Refusal::EmailTaken);
+            $id = $this->insert($tx, $email, $handle, $name, $password === null ? null : self::hash($password));
             $this->assign($tx, $id, $roles);
 
             return $id;
@@ -75,17 +115,16 @@ final class Users
     }
 
     /** The first user of a site, an admin; null when someone was faster: two tabs on a new site never make two. */
-    public function createFirstAdmin(string $email, string $name, string $password): ?int
+    public function createFirstAdmin(string $email, string $handle, string $password, ?string $name = null): ?int
     {
-        return $this->db->transaction(function (Postgres $tx) use ($email, $name, $password): ?int {
+        [$handle, $name] = $this->identity($handle, $name);
+
+        return $this->db->transaction(function (Postgres $tx) use ($email, $handle, $name, $password): ?int {
             $tx->execute('LOCK TABLE auth_users IN EXCLUSIVE MODE');
             if (Row::of($tx->first('SELECT count(*)::int AS n FROM auth_users') ?? [])->int('n') > 0) {
                 return null;
             }
-            $id = Row::of($tx->first(
-                'INSERT INTO auth_users (email, name, password_hash) VALUES ($1, $2, $3) RETURNING id',
-                [trim($email), trim($name), self::hash($password)],
-            ) ?? [])->int('id');
+            $id = $this->insert($tx, $email, $handle, $name, self::hash($password));
             $tx->execute('INSERT INTO auth_user_roles (user_id, role_id) SELECT $1, id FROM auth_roles WHERE builtin', [$id]);
 
             return $id;
@@ -128,13 +167,109 @@ final class Users
         $this->db->execute('UPDATE auth_users SET password_hash = $2 WHERE id = $1', [$id, self::hash($password)]);
     }
 
-    /** The user's own email and name; refused when another account has the email */
-    public function update(int $id, string $email, string $name): void
+    /** The user's own email, handle and display name; refused when another account has one of them */
+    public function update(int $id, string $email, string $handle, ?string $name = null): void
     {
-        if ($this->emailTaken($email, $id)) {
-            throw new AccountRefused(Refusal::EmailTaken);
+        [$handle, $name] = $this->identity($handle, $name);
+        $this->db->transaction(function (Postgres $tx) use ($id, $email, $handle, $name): void {
+            $refusal = self::taken($tx, $email, $handle, $name, $id);
+            if ($refusal !== null) {
+                throw new AccountRefused($refusal);
+            }
+            $tx->execute(
+                'UPDATE auth_users SET email = $2, handle = $3, name = $4, name_key = $5 WHERE id = $1',
+                [$id, trim($email), $handle, $name, $name === null ? null : self::nameKey($name)],
+            );
+        });
+    }
+
+    /** The handle as it is kept (trimmed, lower case); null when it isn't 3 to 32 of a-z, 0-9, _ and - */
+    public static function handle(string $handle): ?string
+    {
+        $handle = strtolower(trim($handle));
+
+        return preg_match(self::HANDLE, $handle) === 1 ? $handle : null;
+    }
+
+    /**
+     * The display name as it is kept: NFKC, spaces collapsed. Null when it is empty, longer than 60 characters, holds
+     * control or invisible characters, or mixes scripts the way a look-alike does ("Kakashi" with a Cyrillic а);
+     * Latin with Japanese, Chinese or Korean is fine.
+     */
+    public static function name(string $name): ?string
+    {
+        $name = Normalizer::normalize($name, Normalizer::FORM_KC);
+        if ($name === false || preg_match('/[\p{Cc}\p{Cf}]/u', $name) === 1) {
+            return null;
         }
-        $this->db->execute('UPDATE auth_users SET email = $2, name = $3 WHERE id = $1', [$id, trim($email), trim($name)]);
+        $name = trim(preg_replace('/\s+/u', ' ', $name) ?? '');
+        if ($name === '' || mb_strlen($name) > self::NAME_LENGTH) {
+            return null;
+        }
+        $checker = new Spoofchecker();
+        $checker->setChecks(Spoofchecker::SINGLE_SCRIPT | Spoofchecker::INVISIBLE | Spoofchecker::MIXED_NUMBERS);
+        $checker->setRestrictionLevel(Spoofchecker::HIGHLY_RESTRICTIVE);
+
+        return $checker->isSuspicious($name) ? null : $name;
+    }
+
+    /**
+     * What makes two display names the same: case folded, so the unique index on name_key refuses "KAKASHI" next to
+     * "Kakashi". Names of a single script can't hide a look-alike letter; name() refuses the mixes.
+     */
+    public static function nameKey(string $name): string
+    {
+        return (string) Normalizer::normalize($name, Normalizer::FORM_KC_CF);
+    }
+
+    /**
+     * The handle and display name as they are kept, or the refusal; without display names, the name is null.
+     *
+     * @return array{string, ?string}
+     */
+    private function identity(string $handle, ?string $name): array
+    {
+        $handle = self::handle($handle) ?? throw new AccountRefused(Refusal::InvalidHandle);
+        if (!$this->options->displayName) {
+            return [$handle, null];
+        }
+
+        return [$handle, self::name($name ?? '') ?? throw new AccountRefused(Refusal::InvalidName)];
+    }
+
+    /** Inserts the user; a taken email, handle or name is refused, also when another request was faster */
+    private function insert(Postgres $tx, string $email, string $handle, ?string $name, ?string $passwordHash): int
+    {
+        $refusal = self::taken($tx, $email, $handle, $name);
+        if ($refusal !== null) {
+            throw new AccountRefused($refusal);
+        }
+        $id = $tx->first(
+            'INSERT INTO auth_users (email, handle, name, name_key, password_hash) VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT DO NOTHING RETURNING id',
+            [trim($email), $handle, $name, $name === null ? null : self::nameKey($name), $passwordHash],
+            as: fn (array $row): int => Row::of($row)->int('id'),
+        );
+
+        return $id ?? throw new AccountRefused(self::taken($tx, $email, $handle, $name) ?? Refusal::EmailTaken);
+    }
+
+    /** Which of email, handle and display name another user has, the first one found; null for none */
+    private static function taken(Postgres $db, string $email, string $handle, ?string $name, ?int $except = null): ?Refusal
+    {
+        $row = $db->first(
+            'SELECT bool_or(lower(email) = lower($1)) AS email, bool_or(handle = $2) AS handle, bool_or(name_key = $3) AS name
+             FROM auth_users WHERE (lower(email) = lower($1) OR handle = $2 OR name_key = $3) AND id IS DISTINCT FROM $4',
+            [trim($email), $handle, $name === null ? null : self::nameKey($name), $except],
+            as: Row::of(...),
+        );
+
+        return match (true) {
+            $row?->nullableBool('email') === true => Refusal::EmailTaken,
+            $row?->nullableBool('handle') === true => Refusal::HandleTaken,
+            $row?->nullableBool('name') === true => Refusal::NameTaken,
+            default => null,
+        };
     }
 
     /**

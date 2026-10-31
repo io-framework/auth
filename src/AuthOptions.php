@@ -22,4 +22,10 @@ final class AuthOptions
      * server ends the session itself.
      */
     public bool $remember = false;
+
+    /**
+     * Whether users have a display name next to their handle. Off, the app's forms ask for none, Users keeps none,
+     * and the handle stands in wherever a name is shown (Principal::$name, Account::$name).
+     */
+    public bool $displayName = true;
 }

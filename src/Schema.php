@@ -2,6 +2,10 @@
 
 namespace Io\Auth;
 
+use Data\Postgres;
+use Io\Support\Row;
+use Transliterator;
+
 /**
  * The tables, as steps for `Data\Migrations`: the app puts them before its own, so its tables can refer to auth_users.
  *
@@ -9,10 +13,44 @@ namespace Io\Auth;
  */
 final class Schema
 {
-    /** @return array<string, string> */
+    /** @return array<string, string|callable(Postgres): void> */
     public static function steps(): array
     {
-        return ['auth_001_accounts' => self::ACCOUNTS];
+        return ['auth_001_accounts' => self::ACCOUNTS, 'auth_002_handles' => self::handles(...)];
+    }
+
+    /**
+     * Every user gets a handle and a unique display name. Existing users get one made from their name ("Zoë Kim"
+     * becomes zoe_kim), with their id appended when it is too short or taken; a name that reads like an earlier
+     * user's gets the id in brackets.
+     */
+    private static function handles(Postgres $tx): void
+    {
+        $tx->execute('ALTER TABLE auth_users ADD COLUMN handle text, ADD COLUMN name_key text, ALTER COLUMN name DROP NOT NULL');
+        $ascii = Transliterator::create('Any-Latin; Latin-ASCII; Lower()');
+        $handles = [];
+        $keys = [];
+        foreach ($tx->query('SELECT id, name FROM auth_users ORDER BY id', as: Row::of(...)) as $user) {
+            $id = $user->int('id');
+            $name = Users::name($user->string('name')) ?? "User $id";
+            $slug = trim(preg_replace('/[^a-z0-9_-]+/', '_', (string) $ascii?->transliterate($name)) ?? '', '_-');
+            $handle = Users::handle(substr($slug, 0, 32));
+            if ($handle === null || isset($handles[$handle])) {
+                $handle = Users::handle(substr($slug, 0, 31 - strlen((string) $id)) . "_$id") ?? "user_$id";
+            }
+            if (isset($keys[Users::nameKey($name)])) {
+                $name = "$name ($id)";
+            }
+            $handles[$handle] = true;
+            $keys[Users::nameKey($name)] = true;
+            $tx->execute(
+                'UPDATE auth_users SET handle = $2, name = $3, name_key = $4 WHERE id = $1',
+                [$id, $handle, $name, Users::nameKey($name)],
+            );
+        }
+        $tx->execute('ALTER TABLE auth_users ALTER COLUMN handle SET NOT NULL');
+        $tx->execute('CREATE UNIQUE INDEX auth_users_handle ON auth_users (handle)');
+        $tx->execute('CREATE UNIQUE INDEX auth_users_name_key ON auth_users (name_key)');
     }
 
     private const string ACCOUNTS = <<<'SQL'

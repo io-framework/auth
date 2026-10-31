@@ -6,6 +6,10 @@ namespace Io\Auth;
 enum Refusal: string
 {
     case EmailTaken = 'email-taken';
+    case HandleTaken = 'handle-taken';
+    case NameTaken = 'name-taken';
+    case InvalidHandle = 'invalid-handle';
+    case InvalidName = 'invalid-name';
     case RoleTaken = 'role-taken';
     case InvalidRoleName = 'invalid-role-name';
     case UnknownRole = 'unknown-role';
