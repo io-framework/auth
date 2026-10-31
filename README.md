@@ -21,6 +21,7 @@ $app->configure(function (AuthOptions $auth) {
     $auth->cookie = '__Host-session'; // the default
     $auth->idle = 12 * 3600;           // seconds after the last request
     $auth->lifetime = 30 * 86400;      // seconds at most
+    $auth->recheck = 300;              // seconds a WebSocket keeps its user before it reads the session again
     $auth->remember = false;           // true: the cookie outlives the browser
     $auth->displayName = true;         // false: users have only a handle
 });
@@ -70,6 +71,11 @@ $sessions->start($id, $req, $res);                   // only once the login is c
 `SessionMiddleware` signs every request in. `Viewer::current()` returns the `Principal` (id, handle, name, email, roles,
 admin, permissions, `can()`), and `$req->principal` holds its claims. `#[Authenticated]`, `#[Role('Editors')]` and
 `#[Permissions('pages.edit')]` check it; `AuthPlugin` binds the `PermissionProvider` that asks the roles.
+
+A WebSocket (io/live) keeps the user it opened with. The claims carry `sid`, the session, and `exp`, at most
+`$recheck` seconds ahead: then the connection opens again and the session is read anew. Ending sessions early
+(`end()`, `endOthers()`, `setDisabled()`, `resetTwoFactor()`) announces them through Io's `SignOuts`, and the
+open connections of those sessions close at once.
 
 `LoginThrottle::attempt($req->ip, $email)` counts an attempt before it is checked: 5 per account and address,
 20 per address and 50 per account in 15 minutes. It lives in the worker's memory.

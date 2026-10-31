@@ -5,6 +5,7 @@ namespace Io\Auth;
 use Data\Postgres;
 use Io\Attributes\Inject;
 use Io\Http\{Request, Response};
+use Io\SignOuts;
 use Io\Support\Row;
 
 /**
@@ -49,7 +50,8 @@ final class Sessions
             return null;
         }
         $row = $this->db->first(
-            "SELECT s.id, s.user_id, s.last_seen_at < now() - interval '5 minutes' AS stale, u.handle,
+            "SELECT s.id, s.user_id, s.last_seen_at < now() - interval '5 minutes' AS stale,
+                    extract(epoch FROM s.expires_at)::bigint AS expires, u.handle,
                     coalesce(u.name, u.handle) AS name, u.email,
                     coalesce(bool_or(r.builtin), false) AS admin,
                     coalesce(array_agg(DISTINCT r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles,
@@ -68,13 +70,15 @@ final class Sessions
             return null;
         }
         // Written at most every 5 minutes, not on every request
+        $expires = $row->int('expires');
         if ($row->bool('stale')) {
-            $this->db->execute(
+            $expires = Row::of($this->db->first(
                 "UPDATE auth_sessions SET last_seen_at = now(),
                     expires_at = least(created_at + interval '1 second' * $2, now() + interval '1 second' * $3)
-                 WHERE id = $1",
+                 WHERE id = $1
+                 RETURNING extract(epoch FROM expires_at)::bigint AS expires",
                 [$row->int('id'), $this->options->lifetime, $this->options->idle],
-            );
+            ) ?? [])->int('expires');
         }
 
         return new Principal(
@@ -86,6 +90,7 @@ final class Sessions
             $row->list('roles', 'string'),
             $row->bool('admin'),
             $row->list('permissions', 'string'),
+            min($expires, time() + $this->options->recheck),
         );
     }
 
@@ -109,7 +114,7 @@ final class Sessions
     {
         $token = $req->cookies[$this->options->cookie] ?? '';
         if ($token !== '') {
-            $this->db->execute('DELETE FROM auth_sessions WHERE token_hash = $1', [hash('sha256', $token)]);
+            self::ended($this->db->query('DELETE FROM auth_sessions WHERE token_hash = $1 RETURNING id', [hash('sha256', $token)]));
         }
         $res?->withCookie($this->options->cookie, '', maxAge: 0, secure: $this->hostOnly() ? true : null);
     }
@@ -117,7 +122,19 @@ final class Sessions
     /** Signs the user out everywhere except in the session $keep: after a new password or second factor. */
     public function endOthers(int $userId, ?int $keep = null): int
     {
-        return $this->db->execute('DELETE FROM auth_sessions WHERE user_id = $1 AND id IS DISTINCT FROM $2', [$userId, $keep]);
+        return self::ended($this->db->query('DELETE FROM auth_sessions WHERE user_id = $1 AND id IS DISTINCT FROM $2 RETURNING id', [$userId, $keep]));
+    }
+
+    /**
+     * @internal Tells the open WebSockets of these sessions that they ended, through Io's SignOuts; returns how many.
+     *
+     * @param list<array<string, mixed>> $rows deleted sessions' ids
+     */
+    public static function ended(array $rows): int
+    {
+        SignOuts::publish(array_map(static fn (array $row): string => (string) Row::of($row)->int('id'), $rows));
+
+        return count($rows);
     }
 
     /** A __Host- or __Secure- cookie needs the Secure flag, or the browser drops it */

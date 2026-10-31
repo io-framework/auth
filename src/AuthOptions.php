@@ -18,6 +18,13 @@ final class AuthOptions
     public int $lifetime = 30 * 86400;
 
     /**
+     * Seconds a connection that outlives its request (a WebSocket of io/live) keeps the user it opened with; then it
+     * reconnects and the session is read again, which also keeps it from going idle. A session ended on purpose
+     * (sign-out, new password, disabled user) closes such connections at once through Io's SignOuts.
+     */
+    public int $recheck = 300;
+
+    /**
      * Whether the cookie outlives the browser (Max-Age is $lifetime); off, it ends with the browser session and the
      * server ends the session itself.
      */

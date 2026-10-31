@@ -5,7 +5,7 @@
     "license": ["MIT", "Apache-2.0"],
     "require": {
         "php": ">=8.5",
-        "io/framework": "^0.1.13",
+        "io/framework": "^0.1.14",
         "chillerlan/php-qrcode": "^6.0"
     },
     "require-dev": {

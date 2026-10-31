@@ -77,6 +77,9 @@ Task::run(function (): void {
         check($principal?->admin === true && $principal->can('anything'), 'admin may do everything');
         check($principal->handle === 'ada' && $principal->name === 'Ada Lovelace', 'principal names');
         check(($req->principal['roles'] ?? null) === ['Admin'] && $req->principalFromCookie, 'request signed in');
+        // A WebSocket asks again after AuthOptions::$recheck, and hears when the session ends before
+        $exp = $req->principal['exp'] ?? 0;
+        check($req->principal['sid'] === (string) $principal->session && $exp > time() && $exp <= time() + 300, 'sid and exp');
 
         // A role an editor can't exceed
         $editors = $roles->create('Editors');
@@ -137,8 +140,17 @@ Task::run(function (): void {
         $kim = $users->create('kim@example.test', 'kim', 'Not kept');
         check($users->find($kim)?->name === 'kim' && !$users->nameTaken('Not kept'), 'no display name');
 
+        // SignOuts' channel, which Io keeps private
+        $signedOut = [];
+        $listening = new \Messaging\Channel('io-sign-outs')->subscribe(function (string $ids) use (&$signedOut): void {
+            $signedOut[] = $ids;
+        });
+        \Threading\Task::delay(0.05);
         $sessions->end($req);
         check($sessions->find($req) === null, 'signed out');
+        \Threading\Task::delay(0.05);
+        $listening->cancel();
+        check($signedOut === [(string) $principal->session], 'sign-out announced');
         echo "ok\n";
     } catch (Throwable $e) {
         echo $e::class . ': ' . $e->getMessage() . ' at ' . basename($e->getFile()) . ':' . $e->getLine() . "\n";

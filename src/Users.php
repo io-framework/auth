@@ -292,22 +292,27 @@ final class Users
     /** A disabled user can't sign in, and their sessions and tokens end now */
     public function setDisabled(Principal $by, int $id, bool $disabled): void
     {
-        $this->change($by, $id, function (Postgres $tx) use ($id, $disabled): void {
+        $ended = [];
+        $this->change($by, $id, function (Postgres $tx) use ($id, $disabled, &$ended): void {
             $tx->execute('UPDATE auth_users SET disabled_at = CASE WHEN $2 THEN coalesce(disabled_at, now()) END WHERE id = $1', [$id, $disabled]);
             if ($disabled) {
-                $tx->execute('DELETE FROM auth_sessions WHERE user_id = $1', [$id]);
+                $ended = $tx->query('DELETE FROM auth_sessions WHERE user_id = $1 RETURNING id', [$id]);
                 $tx->execute('DELETE FROM auth_tokens WHERE user_id = $1', [$id]);
             }
         });
+        // Once committed: a rolled back change ended nothing
+        Sessions::ended($ended);
     }
 
     /** For a lost phone: the second factor is gone, and so are the user's sessions */
     public function resetTwoFactor(Principal $by, int $id): void
     {
-        $this->change($by, $id, function (Postgres $tx) use ($id): void {
+        $ended = [];
+        $this->change($by, $id, function (Postgres $tx) use ($id, &$ended): void {
             $this->clearTwoFactor($tx, $id);
-            $tx->execute('DELETE FROM auth_sessions WHERE user_id = $1', [$id]);
+            $ended = $tx->query('DELETE FROM auth_sessions WHERE user_id = $1 RETURNING id', [$id]);
         });
+        Sessions::ended($ended);
     }
 
     /** Whether $by may change the user $id at all: never their own account, and only an admin changes an admin */
