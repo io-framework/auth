@@ -140,7 +140,7 @@ final class Users
             as: Row::of(...),
         );
         $hash = $user?->nullableString('password_hash') ?? self::dummy();
-        if (!password_verify($password, $hash) || $user === null) {
+        if (!self::verify($password, $hash) || $user === null) {
             return null;
         }
         if (password_needs_rehash($hash, self::ALGORITHM)) {
@@ -159,7 +159,7 @@ final class Users
             as: fn (array $row): ?string => Row::of($row)->nullableString('password_hash'),
         );
 
-        return password_verify($password, $hash ?? self::dummy()) && $hash !== null;
+        return self::verify($password, $hash ?? self::dummy()) && $hash !== null;
     }
 
     public function setPassword(int $id, string $password): void
@@ -477,9 +477,23 @@ final class Users
         $db->execute("UPDATE auth_users SET totp_secret = NULL, totp_enabled_at = NULL, totp_last_step = NULL, recovery_codes = '{}' WHERE id = $1", [$id]);
     }
 
+    /** Under Tenma on a background thread: 100 ms of Argon2 would hold up every request of the worker */
     private static function hash(string $password): string
     {
+        if (class_exists(\Security\Password::class)) {
+            return \Security\Password::hash($password);
+        }
+
         return password_hash($password, self::ALGORITHM);
+    }
+
+    private static function verify(string $password, string $hash): bool
+    {
+        if (class_exists(\Security\Password::class)) {
+            return \Security\Password::verify($password, $hash);
+        }
+
+        return password_verify($password, $hash);
     }
 
     private static function dummy(): string

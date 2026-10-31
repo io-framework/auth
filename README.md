@@ -2,7 +2,7 @@
 
 Sign-in for Io sites on Postgres:
 
-- users with Argon2id passwords
+- users with Argon2id passwords, hashed on a background thread under Tenma (`Security\Password`)
 - database sessions in a cookie
 - TOTP with recovery codes
 - one-time tokens (password links, pending logins, PINs)

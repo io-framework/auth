@@ -11,7 +11,7 @@
     "require-dev": {
         "phpunit/phpunit": "^13.3",
         "phpstan/phpstan": "^2.2",
-        "tenma/stubs": "^0.2.0"
+        "tenma/stubs": "^0.2.22"
     },
     "autoload": {
         "psr-4": {
