@@ -124,6 +124,10 @@ const sealed = await seal(await (await fetch('/sign-in/challenge')).json(), JSON
 
 The key file is created on first use with mode 0600; every worker and process of the service must read the same one.
 
+This keeps the password out of an app that plays by the rules, its logs and its memory. It is no protection
+against an app that cheats: the browser takes the service's key from the app and pins nothing, so an app could
+hand over a key of its own, read the password and seal it again. Run only apps you trust in front of the service.
+
 ## Roles
 
 `Roles` creates, renames and deletes roles and sets their permissions and whether they ask for a second factor.

@@ -89,13 +89,14 @@ final class Sealed
             if ($new === false || !openssl_pkey_export($new, $pem) || !is_string($pem)) {
                 throw new RuntimeException('Sealed could not create a key');
             }
-            // x: only one writer wins; the others read its key below
-            $handle = @fopen($file, 'x');
-            if ($handle !== false) {
-                chmod($file, 0600);
-                fwrite($handle, $pem);
-                fclose($handle);
+            // Written whole next to the file, then linked into place: link() fails when another worker was first, so
+            // nobody ever reads a half-written key
+            $draft = $file . '.' . bin2hex(random_bytes(8));
+            if (file_put_contents($draft, $pem) === false || !chmod($draft, 0600)) {
+                throw new RuntimeException("Sealed could not write its key in $file");
             }
+            @link($draft, $file);
+            unlink($draft);
         }
         $key = openssl_pkey_get_private((string) file_get_contents($file));
         if ($key === false) {

@@ -374,6 +374,10 @@ final class Users
      */
     public function enableTwoFactor(int $id, string $secret, string $code, array $recoveryCodes, bool $replace = false): bool
     {
+        // Only a secret as Totp::secret() makes them: a client that brings its own can't pick a weak one
+        if (preg_match('/^[A-Z2-7]{32}$/', $secret) !== 1) {
+            return false;
+        }
         $step = Totp::verify($secret, $code, time());
         if ($step === null) {
             return false;

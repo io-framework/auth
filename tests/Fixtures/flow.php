@@ -142,6 +142,7 @@ Task::run(function (): void {
         $codes = Users::recoveryCodes();
         check(!$users->enableTwoFactor($ed, $secret, '000000', $codes), 'wrong code');
         $step = intdiv(time(), 30);
+        check(!$users->enableTwoFactor($ed, 'AB', Totp::code('AB', $step), $codes), 'a weak secret of the client\'s own');
         check($users->enableTwoFactor($ed, $secret, Totp::code($secret, $step), $codes), '2FA on');
         check(!$users->verifySecondFactor($ed, Totp::code($secret, $step)), 'a step works once');
         check($users->verifySecondFactor($ed, Totp::code($secret, $step + 1)), 'the next step works');
