@@ -3,7 +3,7 @@
 
 use Data\{Migrations, Postgres};
 use Io\App;
-use Io\Auth\{AccountRefused, AuthOptions, PermissionCatalog, Principal, Refusal, Roles, Schema, Sessions, Tokens, Totp, Users};
+use Io\Auth\{AccountRefused, AuthOptions, PermissionCatalog, Principal, Refusal, Roles, Schema, Sealed, Sessions, Tokens, Totp, Users};
 use Io\Http\{Request, Response};
 use Threading\Task;
 
@@ -14,6 +14,32 @@ function check(bool $condition, string $what): void
     if (!$condition) {
         throw new RuntimeException("failed: $what");
     }
+}
+
+/**
+ * What js/seal.js does in the browser, in PHP: an ephemeral key, ECDH, HKDF, AES-GCM.
+ *
+ * @param array{key: string, challenge: string} $handshake
+ * @return array{challenge: string, key: string, iv: string, data: string}
+ */
+function seal(array $handshake, string $text): array
+{
+    $b64 = fn (string $bytes): string => rtrim(strtr(base64_encode($bytes), '+/', '-_'), '=');
+    $un = fn (string $text): string => (string) base64_decode(strtr($text, '-_', '+/'));
+    $pem = fn (string $point): string => "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode((string) hex2bin('3059301306072a8648ce3d020106082a8648ce3d030107034200') . $point), 64, "\n") . "-----END PUBLIC KEY-----\n";
+    $own = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+    check($own !== false, 'ephemeral key');
+    $details = openssl_pkey_get_details($own);
+    $point = "\x04" . str_pad($details['ec']['x'], 32, "\0", STR_PAD_LEFT) . str_pad($details['ec']['y'], 32, "\0", STR_PAD_LEFT);
+    $salt = $un($handshake['challenge']);
+    $server = openssl_pkey_get_public($pem($un($handshake["key"])));
+    check($server !== false, "server key");
+    $shared = openssl_pkey_derive($server, $own);
+    $aes = hash_hkdf('sha256', (string) $shared, 32, 'io-auth-seal', $salt);
+    $iv = random_bytes(12);
+    $data = (string) openssl_encrypt($text, 'aes-256-gcm', $aes, OPENSSL_RAW_DATA, $iv, $tag, $salt);
+
+    return ['challenge' => $handshake['challenge'], 'key' => $b64($point), 'iv' => $b64($iv), 'data' => $b64($data . $tag)];
 }
 
 function refused(Refusal $reason, callable $work): void
@@ -155,6 +181,18 @@ Task::run(function (): void {
         $kimSecret = Totp::secret();
         $users->enableTwoFactor($kim, $kimSecret, Totp::code($kimSecret, intdiv(time(), 30)), Users::recoveryCodes());
         check($users->pending($kim)->none(), 'nothing pending');
+
+        // Sealed: the app in between passes on what it can't read, once
+        $app->get(AuthOptions::class)->sealKeyFile = sys_get_temp_dir() . '/io-auth-seal-test.pem';
+        @unlink(sys_get_temp_dir() . '/io-auth-seal-test.pem');
+        $sealed = $app->get(Sealed::class);
+        $envelope = seal($sealed->challenge(), '{"password":"secret"}');
+        check($sealed->open(...$envelope) === '{"password":"secret"}', 'sealed opens');
+        check($sealed->open(...$envelope) === null, 'a challenge works once');
+        $tampered = seal($sealed->challenge(), 'x');
+        $tampered['data'] = strrev($tampered['data']);
+        check($sealed->open(...$tampered) === null, 'tampered data');
+        check(substr(sprintf('%o', fileperms(sys_get_temp_dir() . '/io-auth-seal-test.pem')), -3) === '600', 'key file private');
 
         // SignOuts' channel, which Io keeps private
         $signedOut = [];

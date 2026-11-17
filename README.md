@@ -6,7 +6,7 @@ Sign-in for Io sites on Postgres:
 - database sessions in a cookie
 - TOTP with recovery codes
 - one-time tokens (password links, pending logins, PINs)
-- sessions as bare tokens for apps that sign in for others
+- sessions as bare tokens for apps that sign in for others, and sealed sign-ins through them
 - accounts that must set a new password and a second factor at their next sign-in
 - a login throttle
 - roles built from the permissions the app declares, with a built-in Admin role
@@ -103,6 +103,26 @@ $pending->passwordChange;                      // setPassword() clears it
 $pending->twoFactorSetup;                      // enableTwoFactor() clears it; also true when a role asks for one
 $pending->none();
 ```
+
+### Sealed sign-in through another app
+
+When an app offers the sign-in form but must not read the password (a game server in front of a central account
+service), the browser seals it for the service. `js/seal.js` does that with WebCrypto: an ephemeral ECDH P-256 key,
+HKDF-SHA256 and AES-256-GCM, bound to a one-time challenge.
+
+```php
+$app->configure(fn (AuthOptions $auth) => $auth->sealKeyFile = __DIR__ . '/data/seal-key.pem');
+
+$sealed->challenge();                                  // ['key' => ..., 'challenge' => ...] for the browser
+$text = $sealed->open($challenge, $key, $iv, $data);   // what the browser sealed; null when not, each challenge once
+```
+
+```js
+import { seal } from './seal.js';
+const sealed = await seal(await (await fetch('/sign-in/challenge')).json(), JSON.stringify({ email, password }));
+```
+
+The key file is created on first use with mode 0600; every worker and process of the service must read the same one.
 
 ## Roles
 

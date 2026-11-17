@@ -20,6 +20,7 @@ final class Schema
             'auth_001_accounts' => self::ACCOUNTS,
             'auth_002_handles' => self::handles(...),
             'auth_003_pending' => self::PENDING,
+            'auth_004_challenges' => self::CHALLENGES,
         ];
     }
 
@@ -62,6 +63,14 @@ final class Schema
         ALTER TABLE auth_users
             ADD COLUMN password_change_required boolean NOT NULL DEFAULT false,
             ADD COLUMN two_factor_setup_required boolean NOT NULL DEFAULT false;
+        SQL;
+
+    /** One-time challenges of sealed sign-ins (Sealed), by their hash */
+    private const string CHALLENGES = <<<'SQL'
+        CREATE TABLE auth_challenges (
+            challenge_hash text PRIMARY KEY,
+            expires_at timestamptz NOT NULL
+        );
         SQL;
 
     private const string ACCOUNTS = <<<'SQL'

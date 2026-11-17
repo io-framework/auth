@@ -35,4 +35,13 @@ final class AuthOptions
      * and the handle stands in wherever a name is shown (Principal::$name, Account::$name).
      */
     public bool $displayName = true;
+
+    /**
+     * Where Sealed keeps its private key (PEM), created on first use; every worker and process of the site must
+     * read the same file. Empty: Sealed refuses to work.
+     */
+    public string $sealKeyFile = '';
+
+    /** Seconds a challenge of Sealed stays valid */
+    public int $sealChallenge = 120;
 }
