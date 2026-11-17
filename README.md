@@ -6,6 +6,7 @@ Sign-in for Io sites on Postgres:
 - database sessions in a cookie
 - TOTP with recovery codes
 - one-time tokens (password links, pending logins, PINs)
+- sessions as bare tokens for apps that sign in for others
 - a login throttle
 - roles built from the permissions the app declares, with a built-in Admin role
 
@@ -79,6 +80,16 @@ open connections of those sessions close at once.
 
 `LoginThrottle::attempt($req->ip, $email)` counts an attempt before it is checked: 5 per account and address,
 20 per address and 50 per account in 15 minutes. It lives in the worker's memory.
+
+### Sessions for other apps
+
+An API that signs users in for other apps hands them the bare token instead of a cookie:
+
+```php
+$token = $sessions->issue($id, $userAgent);   // the caller keeps it
+$sessions->byToken($token);                   // the Principal, like find(); null once it ended or expired
+$sessions->endToken($token);
+```
 
 ## Roles
 

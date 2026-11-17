@@ -26,14 +26,7 @@ final class Sessions
 
     public function start(int $userId, Request $req, Response $res): void
     {
-        $token = bin2hex(random_bytes(32));
-        $this->db->execute('DELETE FROM auth_sessions WHERE expires_at < now()');
-        $this->db->execute(
-            "INSERT INTO auth_sessions (token_hash, user_id, expires_at, user_agent)
-             VALUES ($1, $2, now() + interval '1 second' * $3, $4)",
-            [hash('sha256', $token), $userId, min($this->options->idle, $this->options->lifetime), substr($req->headers['User-Agent'] ?? '', 0, 300)],
-        );
-        $this->db->execute('UPDATE auth_users SET last_login_at = now() WHERE id = $1', [$userId]);
+        $token = $this->issue($userId, $req->headers['User-Agent'] ?? '');
         $res->withCookie(
             $this->options->cookie,
             $token,
@@ -42,10 +35,33 @@ final class Sessions
         );
     }
 
+    /**
+     * A new session as a bare token, for a caller that keeps it itself (an API that signs users in for other apps);
+     * start() puts one in the cookie. Only once the login is complete, second factor included.
+     */
+    public function issue(int $userId, string $userAgent = ''): string
+    {
+        $token = bin2hex(random_bytes(32));
+        $this->db->execute('DELETE FROM auth_sessions WHERE expires_at < now()');
+        $this->db->execute(
+            "INSERT INTO auth_sessions (token_hash, user_id, expires_at, user_agent)
+             VALUES ($1, $2, now() + interval '1 second' * $3, $4)",
+            [hash('sha256', $token), $userId, min($this->options->idle, $this->options->lifetime), substr($userAgent, 0, 300)],
+        );
+        $this->db->execute('UPDATE auth_users SET last_login_at = now() WHERE id = $1', [$userId]);
+
+        return $token;
+    }
+
     /** The session of the request's cookie with what its roles allow now; null for none, an expired one or a disabled user. */
     public function find(Request $req): ?Principal
     {
-        $token = $req->cookies[$this->options->cookie] ?? '';
+        return $this->byToken($req->cookies[$this->options->cookie] ?? '');
+    }
+
+    /** The session of a token from issue() or the cookie, like find(); also keeps it from going idle. */
+    public function byToken(string $token): ?Principal
+    {
         if ($token === '') {
             return null;
         }
@@ -112,11 +128,16 @@ final class Sessions
     /** Ends the request's session; without a response (over a WebSocket) the cookie stays, worth nothing then. */
     public function end(Request $req, ?Response $res = null): void
     {
-        $token = $req->cookies[$this->options->cookie] ?? '';
+        $this->endToken($req->cookies[$this->options->cookie] ?? '');
+        $res?->withCookie($this->options->cookie, '', maxAge: 0, secure: $this->hostOnly() ? true : null);
+    }
+
+    /** Ends the session of a token from issue() */
+    public function endToken(string $token): void
+    {
         if ($token !== '') {
             self::ended($this->db->query('DELETE FROM auth_sessions WHERE token_hash = $1 RETURNING id', [hash('sha256', $token)]));
         }
-        $res?->withCookie($this->options->cookie, '', maxAge: 0, secure: $this->hostOnly() ? true : null);
     }
 
     /** Signs the user out everywhere except in the session $keep: after a new password or second factor. */

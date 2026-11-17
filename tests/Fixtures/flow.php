@@ -140,6 +140,12 @@ Task::run(function (): void {
         $kim = $users->create('kim@example.test', 'kim', 'Not kept');
         check($users->find($kim)?->name === 'kim' && !$users->nameTaken('Not kept'), 'no display name');
 
+        // A session as a bare token, for an API that signs in for other apps
+        $token = $sessions->issue($kim, 'game server');
+        check($sessions->byToken($token)?->id === $kim && $sessions->byToken('nonsense') === null, 'token session');
+        $sessions->endToken($token);
+        check($sessions->byToken($token) === null, 'token session ended');
+
         // SignOuts' channel, which Io keeps private
         $signedOut = [];
         $listening = new \Messaging\Channel('io-sign-outs')->subscribe(function (string $ids) use (&$signedOut): void {
