@@ -146,6 +146,16 @@ Task::run(function (): void {
         $sessions->endToken($token);
         check($sessions->byToken($token) === null, 'token session ended');
 
+        // An account someone set up with a known password: new password, then a second factor
+        $users->setPassword($kim, 'handed over');
+        $users->requireSetup($kim);
+        check($users->pending($kim)->passwordChange && $users->pending($kim)->twoFactorSetup, 'both pending');
+        $users->setPassword($kim, 'my own now');
+        check(!$users->pending($kim)->passwordChange && $users->pending($kim)->twoFactorSetup, 'password done');
+        $kimSecret = Totp::secret();
+        $users->enableTwoFactor($kim, $kimSecret, Totp::code($kimSecret, intdiv(time(), 30)), Users::recoveryCodes());
+        check($users->pending($kim)->none(), 'nothing pending');
+
         // SignOuts' channel, which Io keeps private
         $signedOut = [];
         $listening = new \Messaging\Channel('io-sign-outs')->subscribe(function (string $ids) use (&$signedOut): void {

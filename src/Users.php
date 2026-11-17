@@ -164,7 +164,7 @@ final class Users
 
     public function setPassword(int $id, string $password): void
     {
-        $this->db->execute('UPDATE auth_users SET password_hash = $2 WHERE id = $1', [$id, self::hash($password)]);
+        $this->db->execute('UPDATE auth_users SET password_hash = $2, password_change_required = false WHERE id = $1', [$id, self::hash($password)]);
     }
 
     /** The user's own email, handle and display name; refused when another account has one of them */
@@ -321,6 +321,37 @@ final class Users
         return $by->id !== $id && ($by->admin || $this->find($id)?->admin === false);
     }
 
+    /**
+     * Asks the user for a new password and a second factor at the next sign-in, for an account someone else set up
+     * with a known password. Either one is done once setPassword() or enableTwoFactor() ran.
+     */
+    public function requireSetup(int $id, bool $password = true, bool $twoFactor = true): void
+    {
+        $this->db->execute(
+            'UPDATE auth_users SET password_change_required = password_change_required OR $2,
+                two_factor_setup_required = two_factor_setup_required OR $3
+             WHERE id = $1',
+            [$id, $password, $twoFactor],
+        );
+    }
+
+    /**
+     * What the user must do before a session starts: a new password, then a second factor (asked for by
+     * requireSetup() or by a role without one set up yet). After authenticate(), before Sessions::start().
+     */
+    public function pending(int $id): Pending
+    {
+        $row = Row::of($this->db->first(
+            'SELECT u.password_change_required AS password,
+                    u.totp_enabled_at IS NULL AND (u.two_factor_setup_required OR coalesce(bool_or(r.two_factor_required), false)) AS two_factor
+             FROM auth_users u LEFT JOIN auth_user_roles ur ON ur.user_id = u.id LEFT JOIN auth_roles r ON r.id = ur.role_id
+             WHERE u.id = $1 GROUP BY u.id',
+            [$id],
+        ) ?? ['password' => false, 'two_factor' => false]);
+
+        return new Pending($row->bool('password'), $row->bool('two_factor'));
+    }
+
     /** @return array{enabled: bool, required: bool} whether the user has a second factor, and whether a role asks for one */
     public function twoFactor(int $id): array
     {
@@ -349,7 +380,8 @@ final class Users
         }
 
         return $this->db->execute(
-            'UPDATE auth_users SET totp_secret = $2, totp_enabled_at = now(), totp_last_step = $3, recovery_codes = $4::text[]
+            'UPDATE auth_users SET totp_secret = $2, totp_enabled_at = now(), totp_last_step = $3, recovery_codes = $4::text[],
+                two_factor_setup_required = false
              WHERE id = $1 AND ($5 OR totp_enabled_at IS NULL)',
             [$id, $secret, $step, array_map(self::recoveryHash(...), $recoveryCodes), $replace],
         ) === 1;

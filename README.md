@@ -7,6 +7,7 @@ Sign-in for Io sites on Postgres:
 - TOTP with recovery codes
 - one-time tokens (password links, pending logins, PINs)
 - sessions as bare tokens for apps that sign in for others
+- accounts that must set a new password and a second factor at their next sign-in
 - a login throttle
 - roles built from the permissions the app declares, with a built-in Admin role
 
@@ -89,6 +90,18 @@ An API that signs users in for other apps hands them the bare token instead of a
 $token = $sessions->issue($id, $userAgent);   // the caller keeps it
 $sessions->byToken($token);                   // the Principal, like find(); null once it ended or expired
 $sessions->endToken($token);
+```
+
+### Accounts set up by someone else
+
+An account created with a known password asks for a new one and a second factor at the next sign-in:
+
+```php
+$users->requireSetup($id);                     // password: true, twoFactor: true
+$pending = $users->pending($id);               // after authenticate(), before a session starts
+$pending->passwordChange;                      // setPassword() clears it
+$pending->twoFactorSetup;                      // enableTwoFactor() clears it; also true when a role asks for one
+$pending->none();
 ```
 
 ## Roles

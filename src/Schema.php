@@ -16,7 +16,11 @@ final class Schema
     /** @return array<string, string|callable(Postgres): void> */
     public static function steps(): array
     {
-        return ['auth_001_accounts' => self::ACCOUNTS, 'auth_002_handles' => self::handles(...)];
+        return [
+            'auth_001_accounts' => self::ACCOUNTS,
+            'auth_002_handles' => self::handles(...),
+            'auth_003_pending' => self::PENDING,
+        ];
     }
 
     /**
@@ -52,6 +56,13 @@ final class Schema
         $tx->execute('CREATE UNIQUE INDEX auth_users_handle ON auth_users (handle)');
         $tx->execute('CREATE UNIQUE INDEX auth_users_name_key ON auth_users (name_key)');
     }
+
+    /** What a user must do at the next sign-in before a session starts (Users::pending()) */
+    private const string PENDING = <<<'SQL'
+        ALTER TABLE auth_users
+            ADD COLUMN password_change_required boolean NOT NULL DEFAULT false,
+            ADD COLUMN two_factor_setup_required boolean NOT NULL DEFAULT false;
+        SQL;
 
     private const string ACCOUNTS = <<<'SQL'
         -- A user signs in with email and password; one without a password sets one through a link first
